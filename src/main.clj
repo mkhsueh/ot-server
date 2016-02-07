@@ -11,10 +11,14 @@
 (def ^{:const true} json-header {"Content-Type" "application/json; charset=utf-8"})
 
 ;; TODO implement version numbers.
-;; TODO use {insert: 'asdf'} {delete: 5} {retain: 5} format.
-;; Formatting over a region: {retain: 5, attributes: {italic: true}}
+;; TODO use
+;;          {ops: {
+;;           [{insert: 'asdf'}, {delete: 5}, {retain: 5, attributes: {italic: true}}]
+;;          }}
+;; format.
 
 ;; List representing document elements for a test document.
+;; For now, just use a text blob.
 (def documentState (atom []))
 
 ;; List of historical canonical operations according to the server.
@@ -35,6 +39,19 @@
                          :time (now)
                          :msg "this is a live chatroom, have fun",
                          :author "system"}]))
+
+(def not-nil? (comp not nil?))
+
+;; Searches for the first top level occurrence of a key in a list of json objects.
+(defn getKeyFromList [key list default]
+  (reduce (fn [acc x]
+            (if (contains? x key)
+              (reduced (get-in x [key]))
+              default
+              ))
+          list
+          )
+  )
 
 ;; Apply a fast-forward operation.
 (defn applyOperation [operation]
@@ -88,22 +105,28 @@
   )
 
 (defn overlappingDelete [op1 op2]
-  (if-not (and (and (= "delete" (:action op1)) (= "delete" (:action op2)))
-               (= (:elemIndex op1) (:elemIndex op2)))
+  "Determines whether two deltas are overlapping deletes."
+  (if-not (and (not-nil? (getKeyFromList "delete" op1 nil))
+               (not-nil? (getKeyFromList "delete" op2 nil)))
     :notRecognized
-    (let [rStart (:index op1)
-          rEnd (+ (:index op1) (:length op1))
-          lStart (:index op2)
-          lEnd (+ (:index op2) (:length op2))]
-      (if (or
-           (or (and (>= rStart lStart) (<= rStart lEnd))
-               (and (>= rEnd lStart) (<= rEnd lEnd)))
-           (or (and (>= lStart rStart) (<= lStart rEnd))
-               (and (>= lEnd rStart) (<= lEnd rEnd)))
-           )
-        :overlappingDelete
-        :notRecognized
-        ))))
+
+    (let [rStart (getKeyFromList "retain" op1 0)
+          lStart(getKeyFromList "retain" op2 0)]
+
+      (let [
+            rEnd (+ rStart (getKeyFromList "delete" op1 0))
+            lEnd (+ lStart (getKeyFromList "delete" op2 0))
+            ]
+
+        (if (or
+             (or (and (>= rStart lStart) (<= rStart lEnd))
+                 (and (>= rEnd lStart) (<= rEnd lEnd)))
+             (or (and (>= lStart rStart) (<= lStart rEnd))
+                 (and (>= lEnd rStart) (<= lEnd rEnd)))
+             )
+          :overlappingDelete
+          :notRecognized
+          )))))
 
 (defn determineTransformCase [op1 op2]
   ;; Go through all the transform determination functions and accumulate the tranform situation.
